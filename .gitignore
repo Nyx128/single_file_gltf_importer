@@ -1,0 +1,6 @@
+Debug/**
+models/**
+
+json_demo.vcxproj
+json_demo.vcxproj.filters
+json_demo.vcxproj.user
