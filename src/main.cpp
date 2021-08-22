@@ -1,3 +1,5 @@
+#pragma once
+
 #include "nlohmann/json.hpp"
 #include <iostream>
 #include <fstream>
@@ -9,6 +11,8 @@
 
 using json = nlohmann::json;
 //Khronos group makes the best stuff as always
+enum dataType{POSITION, NORMAL, TEXCOORD};
+
 std::string readFile(const char* path) {
 	std::ifstream fileStream;
 	std::stringstream textStream;
@@ -25,21 +29,26 @@ std::string readFile(const char* path) {
 	return textStream.str();
 }
 
-//an attempt to get the position vectors of cub.gltf in just the main function
-int main() {
-	//get the binary
-	std::string file = "C:/dev/json_demo/json_demo/models/cube.gltf";
-	json JSON = json::parse(readFile(file.c_str()));
-	std::string uri = JSON["buffers"][0]["uri"];
-	std::string fileDir = file.substr(0, file.find_last_of('/') + 1);
-	std::string bin = readFile((fileDir + uri).c_str());
+std::vector<float> getFloats(json JSON, std::vector<unsigned char> data, dataType attrib, int meshInd) {
+	unsigned int posInd;
+	switch (attrib) {
+	case dataType::POSITION:
+		posInd = JSON["meshes"][meshInd]["primitives"][0]["attributes"]["POSITION"];
+		break;
 
-	std::vector<unsigned char> data(bin.begin(), bin.end());
-	//get the binary
+	case dataType::NORMAL:
+		posInd = JSON["meshes"][meshInd]["primitives"][0]["attributes"]["NORMAL"];
+		break;
 
-	//get the floats
-	unsigned int posInd = JSON["meshes"][0]["primitives"][0]["attributes"]["POSITION"];
+	case dataType::TEXCOORD:
+		posInd = JSON["meshes"][meshInd]["primitives"][0]["attributes"]["TEXCOORD_0"];
+		break;
+
+	default:
+		throw std::invalid_argument("idk how did this happen, you must be proud to get this message");
+	}
 	json accessor = JSON["accessors"][posInd];
+
 	std::vector<float> floatVec;
 
 	unsigned int bufferViewInd = accessor.value("bufferView", 1); //returns 1 if bufferView doesnt have a value
@@ -60,28 +69,117 @@ int main() {
 
 	unsigned int dataBegin = byteOffset + accByteOffset;
 	unsigned int dataLength = count * sizeof(float) * compPerVert;//total byte length
+	//if its a VEC2 its 8, if its a VEC3 its 12 and so on
 
 	for (unsigned int i = dataBegin; i < (dataBegin + dataLength); i) {
 		//a float has 4 bytes so we move by 1 byte each time and store it in a temp array
-		unsigned char bytes[] = {data[i++], data[i++], data[i++], data[i++]};
+		unsigned char bytes[] = {data[i++], data[i++], data[i++], data[i++] };
 		float val;
 		std::memcpy(&val, bytes, sizeof(float));//convert them into floats
 		floatVec.push_back(val); //and finally add it to out vector
 	}
-	//get the floats
-
-	//group the vertex positions into glm::vec3
-	std::vector<glm::vec3> vertexPositions;
-	glm::vec3 pos = glm::vec3(0.0f);
-	for (int i = 0; i < floatVec.size() / 3; i++) {
-		pos.x = floatVec[i + 0];
-		pos.y = floatVec[i + 1];
-		pos.z = floatVec[i + 2];
-		vertexPositions.push_back(pos);
-	}
-	std::cout << file << std::endl;
-	for (glm::vec3 position : vertexPositions) {
-		printf("(%f, %f, %f)\n", position.x, position.y, position.z);
-	}
-	//group the vertex positions into glm::vec3
+	
+	return floatVec;
 }
+
+std::vector<unsigned int>getIndices(json JSON, std::vector<unsigned char> data) {
+	unsigned int indiceInd;
+	indiceInd = JSON["meshes"][0]["primitives"][0]["indices"];
+
+	json accessor = JSON["accessors"][indiceInd];
+
+	std::vector<unsigned int> indices;
+
+	unsigned int buffViewInd = accessor.value("bufferView", 0);
+	unsigned int count = accessor["count"];
+	unsigned int accByteOffset = accessor.value("byteOffset", 0);
+	unsigned int componentType = accessor["componentType"];
+
+	// Get properties from the bufferView
+	json bufferView = JSON["bufferViews"][buffViewInd];
+	unsigned int byteOffset = bufferView["byteOffset"];
+
+	// Get indices with regards to their type: unsigned int, unsigned short, or short
+	unsigned int beginningOfData = byteOffset + accByteOffset;
+	if (componentType == 5125)
+	{
+		for (unsigned int i = beginningOfData; i < beginningOfData + count * 4; i)
+		{
+			unsigned char bytes[] = { data[i++], data[i++], data[i++], data[i++] }; //4 bytes(32-bits)
+			unsigned int value;
+			std::memcpy(&value, bytes, sizeof(unsigned int));
+			indices.push_back((unsigned int)value);
+		}
+	}
+	else if (componentType == 5123)
+	{
+		for (unsigned int i = beginningOfData; i < beginningOfData + count * 2; i)
+		{
+			unsigned char bytes[] = { data[i++], data[i++] };
+			unsigned short value;
+			std::memcpy(&value, bytes, sizeof(unsigned short)); //2 bytes(16-bits)
+			indices.push_back((unsigned int)value);
+		}
+	}
+	else if (componentType == 5122)
+	{
+		for (unsigned int i = beginningOfData; i < beginningOfData + count * 2; i)
+		{
+			unsigned char bytes[] = { data[i++], data[i++] };
+			short value;
+			std::memcpy(&value, bytes, sizeof(short));
+			indices.push_back((unsigned int)value);
+		}
+	}
+
+	return indices;
+
+}
+
+std::string getTextures(json JSON, std::string fileDir, int texInd) {
+	std::string texUri = JSON["images"][texInd]["uri"];
+
+	return fileDir + texUri;
+}
+
+std::vector<glm::vec3> groupVec3(std::vector<float> floatVec) {
+	std::vector<glm::vec3> vectors;
+	for (int i = 0; i < floatVec.size(); i) {
+		vectors.push_back(glm::vec3(floatVec[i++], floatVec[i++], floatVec[i++]));
+	}
+
+	return vectors;
+}
+
+std::vector<glm::vec2> groupVec2(std::vector<float> floatVec) {
+	std::vector<glm::vec2> vectors;
+	for (int i = 0; i < floatVec.size(); i) {
+		vectors.push_back(glm::vec2(floatVec[i++], floatVec[i++]));
+	}
+
+	return vectors;
+}
+
+//an attempt to get the position, normal and texCoord vectors of cub.gltf in just one file(given its a single mesh)
+int main() {
+	//get the binary
+	std::string file = "C:/dev/json_demo/json_demo/models/textured_plane/textured_plane.gltf";
+	json JSON = json::parse(readFile(file.c_str()));
+	std::string uri = JSON["buffers"][0]["uri"];
+	std::string fileDir = file.substr(0, file.find_last_of('/') + 1);
+	std::string bin = readFile((fileDir + uri).c_str());
+
+	std::vector<unsigned char> data(bin.begin(), bin.end());
+
+	std::vector<float> posFloats = getFloats(JSON, data, dataType::POSITION, 0);
+	std::vector<glm::vec3> vertPos = groupVec3(posFloats);
+
+	std::vector<float> normalFloats = getFloats(JSON, data, dataType::NORMAL, 0);
+	std::vector<glm::vec3> normals = groupVec3(normalFloats);
+
+	std::vector<unsigned int> indices = getIndices(JSON, data);
+
+	std::vector<float> texFloats = getFloats(JSON, data, dataType::TEXCOORD, 0);
+	std::vector<glm::vec2> texCoords = groupVec2(texFloats);
+	
+ }
